@@ -93,10 +93,20 @@ def preprocess_features(df: pd.DataFrame, target_columns=None):
 
         tfidf = TfidfVectorizer(max_features=20, min_df=2, max_df=0.8,
                                 stop_words='english', ngram_range=(1, 2))
+        tfidf = TfidfVectorizer(max_features=20, min_df=2, max_df=0.8,
+                        stop_words='english', ngram_range=(1, 2))
         tfidf_matrix = tfidf.fit_transform(df_processed['Needs type_cleaned'])
-        tfidf_features = pd.DataFrame(tfidf.toarray(), 
-                                      columns=[f"needs_tfidf_{f}" for f in tfidf.get_feature_names_out()],
-                                      index=df_processed.index)
+
+        tfidf_features = pd.DataFrame(
+             tfidf_matrix.toarray(),  # ✅ use the matrix, not the vectorizer
+             columns=[f"needs_tfidf_{f}" for f in tfidf.get_feature_names_out()],
+             index=df_processed.index
+            )
+
+        df_processed = pd.concat([df_processed, tfidf_features], axis=1)
+        df_processed.drop(['Needs type', 'Needs type_cleaned', 'why no', 'good workings'],
+                  axis=1, errors='ignore', inplace=True)
+
         df_processed = pd.concat([df_processed, tfidf_features], axis=1)
         df_processed.drop(['Needs type', 'Needs type_cleaned', 'why no', 'good workings'],
                           axis=1, errors='ignore', inplace=True)
