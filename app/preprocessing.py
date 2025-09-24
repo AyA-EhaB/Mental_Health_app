@@ -7,7 +7,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from imblearn.over_sampling import SMOTE
 from sklearn.decomposition import PCA
-from pandas.api.types import is_object_dtype
 
 # -----------------
 # 🔹 Load & Clean
@@ -59,7 +58,7 @@ def preprocess_features(df: pd.DataFrame, target_columns=None):
 
     # --- Severity / frequency mappings ---
     for col in df_processed.columns:
-        if is_object_dtype(df_processed[col]):
+        if df_processed[col].dtype == 'object':
             for key, value in severity_mapping.items():
                 df_processed[col] = df_processed[col].replace(key, value)
 
@@ -95,11 +94,9 @@ def preprocess_features(df: pd.DataFrame, target_columns=None):
         tfidf = TfidfVectorizer(max_features=20, min_df=2, max_df=0.8,
                                 stop_words='english', ngram_range=(1, 2))
         tfidf_matrix = tfidf.fit_transform(df_processed['Needs type_cleaned'])
-        tfidf_features = pd.DataFrame(
-            tfidf_matrix.toarray(),
-            columns=[f"needs_tfidf_{f}" for f in tfidf.get_feature_names_out()],
-            index=df_processed.index
-        )
+        tfidf_features = pd.DataFrame(tfidf.toarray(), 
+                                      columns=[f"needs_tfidf_{f}" for f in tfidf.get_feature_names_out()],
+                                      index=df_processed.index)
         df_processed = pd.concat([df_processed, tfidf_features], axis=1)
         df_processed.drop(['Needs type', 'Needs type_cleaned', 'why no', 'good workings'],
                           axis=1, errors='ignore', inplace=True)
@@ -107,11 +104,8 @@ def preprocess_features(df: pd.DataFrame, target_columns=None):
     # --- Label Encoding for remaining categoricals ---
     le = LabelEncoder()
     for col in df_processed.columns:
-        try:
-            if is_object_dtype(df_processed[col]):
-                df_processed[col] = le.fit_transform(df_processed[col].astype(str))
-        except Exception as e:
-            print(f"⚠️ Skipping column {col} during label encoding: {e}")
+        if df_processed[col].dtype == 'object':
+            df_processed[col] = le.fit_transform(df_processed[col].astype(str))
 
     # --- Derived features ---
     symptom_cols = [c for c in df_processed.columns if any(w in c.lower() for w in 
@@ -147,26 +141,16 @@ def preprocess_features(df: pd.DataFrame, target_columns=None):
 def prepare_ml_data(df_processed, target_columns, use_pca=True):
     """Apply SMOTE, scaling, and PCA, return X, y"""
     smote_datasets = []
-
     for target in target_columns:
         if target in df_processed.columns:
             X = df_processed.drop(columns=target_columns)
             y = df_processed[target]
-
-            # ⚠️ Skip SMOTE if any class has < 2 samples
-            class_counts = y.value_counts()
-            if (class_counts < 2).any():
-                print(f"⚠️ Skipping SMOTE for {target} (too few samples in one or more classes)")
-                df_resampled = pd.concat([X, y], axis=1)
-            else:
-                sm = SMOTE(random_state=42)
-                X_res, y_res = sm.fit_resample(X, y)
-                df_resampled = pd.DataFrame(X_res, columns=X.columns)
-                df_resampled[target] = y_res
-
+            sm = SMOTE(random_state=42)
+            X_res, y_res = sm.fit_resample(X, y)
+            df_resampled = pd.DataFrame(X_res, columns=X.columns)
+            df_resampled[target] = y_res
             smote_datasets.append(df_resampled)
 
-    # Combine all augmented datasets
     df_aug = pd.concat(smote_datasets, ignore_index=True).drop_duplicates()
 
     X_final = df_aug.drop(columns=target_columns)
@@ -181,4 +165,3 @@ def prepare_ml_data(df_processed, target_columns, use_pca=True):
         return X_pca, y_final, scaler, pca
     else:
         return X_scaled, y_final, scaler, None
-
