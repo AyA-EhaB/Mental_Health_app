@@ -2,15 +2,36 @@
 import streamlit as st
 import pandas as pd
 import os
+import joblib
 
-from preprocessing import load_data, preprocess_features, prepare_ml_data
-from modeling import train_models, save_best_model, load_model
+from preprocessing import preprocess_features
+
+# -----------------
+# 🔹 Load Artifacts
+# -----------------
+MODEL_DIR = "saved_models"
+TARGET_COLUMNS = ["Depression", "Anxiety", "PersonallyDisorder", "PTSD"]
+
+@st.cache_resource
+def load_artifacts():
+    models = {}
+    for target in TARGET_COLUMNS:
+        model_path = os.path.join(MODEL_DIR, f"{target}.joblib")
+        if os.path.exists(model_path):
+            models[target] = joblib.load(model_path)
+
+    scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.joblib"))
+    pca_path = os.path.join(MODEL_DIR, "pca.joblib")
+    pca = joblib.load(pca_path) if os.path.exists(pca_path) else None
+
+    return models, scaler, pca
+
 
 # -----------------
 # Sidebar Navigation
 # -----------------
 st.sidebar.title("🧠 Mental Health Prediction")
-page = st.sidebar.radio("Navigate", ["Data Upload", "Train Models", "Predict"])
+page = st.sidebar.radio("Navigate", ["Data Upload", "Predict"])
 
 # -----------------
 # 1️⃣ Data Upload Page
@@ -20,81 +41,56 @@ if page == "Data Upload":
 
     uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
     if uploaded_file:
-        df = load_data(uploaded_file)
+        df = pd.read_csv(uploaded_file)
         st.session_state["df"] = df
         st.write("✅ Data Loaded:", df.shape)
         st.dataframe(df.head())
 
 # -----------------
-# 2️⃣ Train Models Page
-# -----------------
-elif page == "Train Models":
-    st.title("⚙️ Train & Evaluate Models")
-
-    if "df" not in st.session_state:
-        st.warning("Please upload data first!")
-    else:
-        df = st.session_state["df"]
-        target_columns = ['Depression', 'Anxiety', 'Personally Disorder', 'PTSD']
-
-        # preprocess
-        df_processed = preprocess_features(df, target_columns)
-        X, y, scaler, pca = prepare_ml_data(df_processed, target_columns)
-
-        results_summary = {}
-
-        for target in target_columns:
-            if target in y.columns:
-                st.subheader(f"📊 Training for {target}")
-                results, trained = train_models(X, y[target], target)
-
-                # save best model
-                filepath, best_name, best_metrics = save_best_model(trained, results, target)
-                st.success(f"Best {target} model: {best_name} (F1={best_metrics['f1_score']:.3f})")
-                results_summary[target] = results
-
-        st.session_state["scaler"] = scaler
-        st.session_state["pca"] = pca
-
-# -----------------
-# 3️⃣ Predict Page
+# 2️⃣ Predict Page
 # -----------------
 elif page == "Predict":
     st.title("🔮 Make Predictions")
 
-    if "scaler" not in st.session_state:
-        st.warning("Please train models first!")
-    else:
-        # Example: Ask user for inputs
-        age = st.number_input("Age", min_value=18, max_value=35, value=25)
-        income_before = st.selectbox("Income before war", ["very low", "low", "medium", "high"])
-        income_after = st.selectbox("Income after war", ["very low", "low", "medium", "high"])
-        fear_life = st.radio("Felt afraid of losing life?", ["yes", "no"])
+    # Load trained models and preprocessing artifacts
+    models, scaler, pca = load_artifacts()
+    if not models:
+        st.error("❌ No trained models found in saved_models/. Please run train.py first.")
+        st.stop()
 
-        # Build a single-row dataframe
-        input_dict = {
-            "Age": [age],
-            "income level before war": [income_before],
-            "income level after war": [income_after],
-            "felt afraid for lossing life": [fear_life],
-            # add more fields as needed
-        }
-        df_input = pd.DataFrame(input_dict)
+    # Example user inputs
+    age = st.number_input("Age", min_value=18, max_value=35, value=25)
+    income_before = st.selectbox("Income before war", ["very low", "low", "medium", "high"])
+    income_after = st.selectbox("Income after war", ["very low", "low", "medium", "high"])
+    fear_life = st.radio("Felt afraid of losing life?", ["yes", "no"])
 
-        # preprocess same way as training
-        df_proc = preprocess_features(df_input, target_columns=['Depression','Anxiety','Personally Disorder','PTSD'])
-        X_input, _, _, _ = prepare_ml_data(df_proc, target_columns=[], use_pca=("pca" in st.session_state and st.session_state["pca"]))
+    # Build single-row dataframe
+    input_dict = {
+        "Age": [age],
+        "income level before war": [income_before],
+        "income level after war": [income_after],
+        "felt afraid for lossing life": [fear_life],
+    }
+    df_input = pd.DataFrame(input_dict)
 
-        # Apply scaler + pca
-        if st.session_state["scaler"]:
-            X_input = st.session_state["scaler"].transform(df_proc.drop(columns=['Depression','Anxiety','Personally Disorder','PTSD'], errors="ignore"))
-        if st.session_state["pca"]:
-            X_input = st.session_state["pca"].transform(X_input)
+    # Apply same preprocessing
+    df_proc = preprocess_features(df_input, target_columns=TARGET_COLUMNS)
 
-        st.subheader("Predictions")
-        for target in ['Depression', 'Anxiety', 'Personally Disorder', 'PTSD']:
-            model_files = [f for f in os.listdir("saved_models") if target in f]
-            if model_files:
-                model = load_model(os.path.join("saved_models", model_files[0]))
-                pred = model.predict(X_input)[0]
-                st.write(f"**{target}:** {pred}")
+    # Drop targets if they exist (user won’t provide them)
+    X_input = df_proc.drop(columns=TARGET_COLUMNS, errors="ignore")
+
+    # Apply scaler + PCA (same as training)
+    X_input = scaler.transform(X_input)
+    if pca is not None:
+        X_input = pca.transform(X_input)
+
+    # -----------------
+    # 🔮 Predictions
+    # -----------------
+    st.subheader("Predictions")
+    for target, model in models.items():
+        try:
+            pred = model.predict(X_input)[0]
+            st.write(f"**{target}:** {pred}")
+        except Exception as e:
+            st.warning(f"⚠️ Could not predict {target}: {e}")
