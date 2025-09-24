@@ -5,5 +5,5 @@ nbformat
 numpy
 pandas
 seaborn
-sklearn
-warnings
+scikit-learn
+streamlit
