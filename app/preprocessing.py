@@ -7,6 +7,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from imblearn.over_sampling import SMOTE
 from sklearn.decomposition import PCA
+from pandas.api.types import is_object_dtype
 
 # -----------------
 # 🔹 Load & Clean
@@ -58,7 +59,7 @@ def preprocess_features(df: pd.DataFrame, target_columns=None):
 
     # --- Severity / frequency mappings ---
     for col in df_processed.columns:
-        if df_processed[col].dtype == 'object':
+        if is_object_dtype(df_processed[col]):
             for key, value in severity_mapping.items():
                 df_processed[col] = df_processed[col].replace(key, value)
 
@@ -93,20 +94,12 @@ def preprocess_features(df: pd.DataFrame, target_columns=None):
 
         tfidf = TfidfVectorizer(max_features=20, min_df=2, max_df=0.8,
                                 stop_words='english', ngram_range=(1, 2))
-        tfidf = TfidfVectorizer(max_features=20, min_df=2, max_df=0.8,
-                        stop_words='english', ngram_range=(1, 2))
         tfidf_matrix = tfidf.fit_transform(df_processed['Needs type_cleaned'])
-
         tfidf_features = pd.DataFrame(
-             tfidf_matrix.toarray(),  # ✅ use the matrix, not the vectorizer
-             columns=[f"needs_tfidf_{f}" for f in tfidf.get_feature_names_out()],
-             index=df_processed.index
-            )
-
-        df_processed = pd.concat([df_processed, tfidf_features], axis=1)
-        df_processed.drop(['Needs type', 'Needs type_cleaned', 'why no', 'good workings'],
-                  axis=1, errors='ignore', inplace=True)
-
+            tfidf_matrix.toarray(),
+            columns=[f"needs_tfidf_{f}" for f in tfidf.get_feature_names_out()],
+            index=df_processed.index
+        )
         df_processed = pd.concat([df_processed, tfidf_features], axis=1)
         df_processed.drop(['Needs type', 'Needs type_cleaned', 'why no', 'good workings'],
                           axis=1, errors='ignore', inplace=True)
@@ -114,8 +107,11 @@ def preprocess_features(df: pd.DataFrame, target_columns=None):
     # --- Label Encoding for remaining categoricals ---
     le = LabelEncoder()
     for col in df_processed.columns:
-        if df_processed[col].dtype == 'object':
-            df_processed[col] = le.fit_transform(df_processed[col].astype(str))
+        try:
+            if is_object_dtype(df_processed[col]):
+                df_processed[col] = le.fit_transform(df_processed[col].astype(str))
+        except Exception as e:
+            print(f"⚠️ Skipping column {col} during label encoding: {e}")
 
     # --- Derived features ---
     symptom_cols = [c for c in df_processed.columns if any(w in c.lower() for w in 
