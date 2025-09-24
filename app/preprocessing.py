@@ -147,16 +147,26 @@ def preprocess_features(df: pd.DataFrame, target_columns=None):
 def prepare_ml_data(df_processed, target_columns, use_pca=True):
     """Apply SMOTE, scaling, and PCA, return X, y"""
     smote_datasets = []
+
     for target in target_columns:
         if target in df_processed.columns:
             X = df_processed.drop(columns=target_columns)
             y = df_processed[target]
-            sm = SMOTE(random_state=42)
-            X_res, y_res = sm.fit_resample(X, y)
-            df_resampled = pd.DataFrame(X_res, columns=X.columns)
-            df_resampled[target] = y_res
+
+            # ⚠️ Skip SMOTE if any class has < 2 samples
+            class_counts = y.value_counts()
+            if (class_counts < 2).any():
+                print(f"⚠️ Skipping SMOTE for {target} (too few samples in one or more classes)")
+                df_resampled = pd.concat([X, y], axis=1)
+            else:
+                sm = SMOTE(random_state=42)
+                X_res, y_res = sm.fit_resample(X, y)
+                df_resampled = pd.DataFrame(X_res, columns=X.columns)
+                df_resampled[target] = y_res
+
             smote_datasets.append(df_resampled)
 
+    # Combine all augmented datasets
     df_aug = pd.concat(smote_datasets, ignore_index=True).drop_duplicates()
 
     X_final = df_aug.drop(columns=target_columns)
@@ -171,3 +181,4 @@ def prepare_ml_data(df_processed, target_columns, use_pca=True):
         return X_pca, y_final, scaler, pca
     else:
         return X_scaled, y_final, scaler, None
+
